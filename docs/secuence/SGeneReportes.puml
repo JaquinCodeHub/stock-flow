@@ -1,0 +1,138 @@
+@startuml Secuencia_Reporte_StockFlow
+!theme plain
+
+title Stock Flow - Generación de Reporte de Inventario\nBase de datos: SQLite\nGenerado: 2025-08-23 01:10:31 UTC por ShivaAtom
+
+actor Usuario as user
+participant "Frontend" as frontend
+participant "API Gateway" as gateway
+participant "Reports Service" as reports
+participant "Background Worker" as worker
+participant "File Service" as files
+database "SQLite DB" as sqlite
+database "Redis Queue" as redis
+
+== Generar Reporte Asíncrono ==
+
+user -> frontend : 1. Accede a /reports/new\nSelecciona tipo y parámetros
+activate frontend
+
+frontend -> frontend : 2. Validar parámetros\n(fechas, filtros válidos)
+
+frontend -> gateway : 3. POST /reports/generate\n{type: 'STOCK_ACTUAL', parameters, format: 'PDF'}
+activate gateway
+
+gateway -> reports : 4. generateReport(reportData, userId)
+activate reports
+
+reports -> sqlite : 5. INSERT INTO reports\n(report_name, report_type, parameters,\nfile_format, generated_by, created_at)\nVALUES (?, ?, ?, ?, ?, datetime('now'))
+activate sqlite
+sqlite --> reports : 6. report_id generado
+deactivate sqlite
+
+reports -> redis : 7. LPUSH report_queue\n{reportId, type, parameters, userId}
+activate redis
+redis --> reports : 8. Job queued
+deactivate redis
+
+reports --> gateway : 9. {reportId, status: 'QUEUED', message}
+deactivate reports
+
+gateway --> frontend : 10. 202 Accepted\n{jobId: reportId, status: 'PROCESSING'}
+deactivate gateway
+
+frontend -> frontend : 11. Mostrar indicador\n"Generando reporte..."
+
+frontend -> frontend : 12. Iniciar polling\nsetInterval(checkStatus, 5000)
+
+== Procesamiento en Background ==
+
+worker -> redis : 13. BRPOP report_queue 0\n(esperar jobs)
+activate worker
+activate redis
+redis --> worker : 14. {reportData}
+deactivate redis
+
+worker -> sqlite : 15. UPDATE reports\nSET status = 'PROCESSING'\nWHERE report_id = ?
+activate sqlite
+sqlite --> worker : 16. Success
+deactivate sqlite
+
+alt Reporte de Stock Actual
+    worker -> sqlite : 17. SELECT p.product_code, p.product_name,\nc.category_name, s.supplier_name,\nst.current_quantity, st.available_quantity,\np.unit_price, (st.current_quantity * p.unit_price) as value\nFROM products p\nJOIN categories c ON p.category_id = c.category_id\nJOIN suppliers s ON p.supplier_id = s.supplier_id\nJOIN inventory_stock st ON p.product_id = st.product_id\nWHERE p.is_active = 1\nORDER BY p.product_name
+    activate sqlite
+    sqlite --> worker : 18. reportData[]
+    deactivate sqlite
+    
+    worker -> worker : 19. Procesar datos\nCalcular totales y métricas
+    
+    worker -> files : 20. generatePDF(data, template)
+    activate files
+    files --> worker : 21. filePath
+    deactivate files
+    
+    worker -> sqlite : 22. UPDATE reports\nSET file_path = ?, status = 'COMPLETED',\ngenerated_at = datetime('now')\nWHERE report_id = ?
+    activate sqlite
+    sqlite --> worker : 23. Success
+    deactivate sqlite
+    
+else Error en procesamiento
+    worker -> sqlite : 22. UPDATE reports\nSET status = 'FAILED', error_message = ?\nWHERE report_id = ?
+    worker --> worker : 24. Log error details
+end
+
+deactivate worker
+
+== Verificación de Estado ==
+
+frontend -> gateway : 25. GET /reports/{reportId}/status
+activate frontend
+activate gateway
+
+gateway -> reports : 26. getReportStatus(reportId)
+activate reports
+
+reports -> sqlite : 27. SELECT status, file_path, generated_at\nFROM reports WHERE report_id = ?
+activate sqlite
+sqlite --> reports : 28. reportStatus
+deactivate sqlite
+
+reports --> gateway : 29. {status, downloadUrl?, completedAt?}
+deactivate reports
+
+gateway --> frontend : 30. 200 OK\n{status: 'COMPLETED', downloadUrl}
+deactivate gateway
+
+alt Reporte completado
+    frontend -> frontend : 31. Ocultar indicador\nMostrar enlace descarga
+    
+    frontend --> user : 32. "Reporte listo para descarga"
+    deactivate frontend
+    
+    user -> frontend : 33. Click en descargar
+    activate frontend
+    
+    frontend -> gateway : 34. GET /reports/{reportId}/download
+    activate gateway
+    
+    gateway -> files : 35. streamFile(filePath)
+    activate files
+    files --> gateway : 36. fileStream
+    deactivate files
+    
+    gateway --> frontend : 37. File download\nContent-Type: application/pdf
+    deactivate gateway
+    
+    frontend --> user : 38. Descarga archivo PDF
+    deactivate frontend
+    
+else Reporte aún procesando
+    frontend -> frontend : 31. Continuar polling
+    frontend --> user : 32. "Procesando... {progress}%"
+end
+
+note over redis : Cola Redis para procesamiento\nasíncrono de reportes pesados
+note over sqlite : Consultas optimizadas con JOINs\npara reportes complejos
+note over worker : Worker independiente permite\nescalar procesamiento
+
+@enduml

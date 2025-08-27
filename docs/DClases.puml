@@ -1,0 +1,484 @@
+@startuml DiagramaClases_StockFlow
+!define ABSTRACT abstract class
+!define INTERFACE interface
+!define ENUM enum
+
+' Configuración del diagrama
+skinparam class {
+    BackgroundColor White
+    BorderColor Black
+    ArrowColor Black
+}
+
+title Stock Flow - Diagrama de Clases\nSistema de Gestión de Inventarios\nGenerado: 2025-08-23 00:44:45 UTC
+
+' ============================================================================
+' INTERFACES Y CLASES ABSTRACTAS BASE
+' ============================================================================
+
+' Interface para entidades que requieren auditoría
+INTERFACE IAuditable {
+    + getCreatedAt(): DateTime
+    + getUpdatedAt(): DateTime
+    + setUpdatedAt(DateTime): void
+}
+
+' Interface para entidades que pueden ser activadas/desactivadas
+INTERFACE IActivatable {
+    + isActive(): boolean
+    + activate(): void
+    + deactivate(): void
+}
+
+' Clase abstracta base para todas las entidades
+ABSTRACT BaseEntity {
+    # id: Long
+    # createdAt: DateTime
+    # updatedAt: DateTime
+    --
+    + getId(): Long
+    + getCreatedAt(): DateTime
+    + getUpdatedAt(): DateTime
+    + setUpdatedAt(DateTime): void
+    # BaseEntity()
+}
+
+' ============================================================================
+' ENUMERACIONES DEL SISTEMA
+' ============================================================================
+
+' Enum para tipos de roles del sistema
+ENUM RoleType {
+    ADMIN
+    EMPLOYEE
+    --
+    + getDescription(): String
+    + getPermissions(): List<Permission>
+}
+
+' Enum para tipos de movimientos de inventario
+ENUM MovementType {
+    ENTRADA
+    SALIDA
+    AJUSTE_POSITIVO
+    AJUSTE_NEGATIVO
+    TRANSFERENCIA
+    DEVOLUCION
+    --
+    + isInbound(): boolean
+    + affectsStock(): boolean
+    + getDescription(): String
+}
+
+' Enum para tipos de reportes
+ENUM ReportType {
+    STOCK_ACTUAL
+    MOVIMIENTOS_PERIODO
+    PRODUCTOS_BAJO_STOCK
+    VALORACION_INVENTARIO
+    ACTIVIDAD_USUARIOS
+    --
+    + getTemplate(): String
+    + getRequiredParams(): List<String>
+}
+
+' Enum para formatos de reporte
+ENUM ReportFormat {
+    PDF
+    XLSX
+    CSV
+    JSON
+    --
+    + getMimeType(): String
+    + getFileExtension(): String
+}
+
+' ============================================================================
+' CLASES DE DOMINIO - USUARIOS Y SEGURIDAD
+' ============================================================================
+
+' Clase principal para usuarios del sistema Stock Flow
+class User extends BaseEntity implements IAuditable, IActivatable {
+    - username: String {unique}
+    - email: String {unique}
+    - passwordHash: String
+    - firstName: String
+    - lastName: String
+    - phone: String
+    - isActive: boolean
+    - lastLogin: DateTime
+    - roles: Set<UserRole>
+    - sessions: Set<UserSession>
+    - createdProducts: Set<Product>
+    - movements: Set<InventoryMovement>
+    - generatedReports: Set<Report>
+    --
+    + User(username, email, password)
+    + getFullName(): String
+    + hasRole(RoleType): boolean
+    + hasPermission(String): boolean
+    + updatePassword(String): void
+    + recordLogin(): void
+    + addRole(Role): void
+    + removeRole(Role): void
+    + isActive(): boolean
+    + activate(): void
+    + deactivate(): void
+    + validatePassword(String): boolean
+    + generateJWT(): String
+}
+
+' Clase para roles del sistema
+class Role extends BaseEntity {
+    - roleName: RoleType {unique}
+    - description: String
+    - userRoles: Set<UserRole>
+    --
+    + Role(RoleType, description)
+    + getRoleName(): RoleType
+    + getDescription(): String
+    + getUsers(): Set<User>
+}
+
+' Clase de relación muchos a muchos entre User y Role
+class UserRole extends BaseEntity {
+    - user: User
+    - role: Role
+    - assignedAt: DateTime
+    - assignedBy: User
+    --
+    + UserRole(User, Role, User)
+    + getUser(): User
+    + getRole(): Role
+    + getAssignedBy(): User
+    + getAssignedAt(): DateTime
+}
+
+' Clase para gestión de sesiones JWT
+class UserSession extends BaseEntity {
+    - user: User
+    - jwtTokenHash: String
+    - ipAddress: String
+    - userAgent: String
+    - expiresAt: DateTime
+    - isActive: boolean
+    --
+    + UserSession(User, String, String, String)
+    + isExpired(): boolean
+    + invalidate(): void
+    + refresh(DateTime): void
+    + getUser(): User
+    + isActive(): boolean
+}
+
+' ============================================================================
+' CLASES DE DOMINIO - CATÁLOGO
+' ============================================================================
+
+' Clase para categorías de productos
+class Category extends BaseEntity implements IAuditable, IActivatable {
+    - categoryName: String {unique}
+    - description: String
+    - isActive: boolean
+    - products: Set<Product>
+    --
+    + Category(categoryName, description)
+    + getCategoryName(): String
+    + getDescription(): String
+    + getProducts(): Set<Product>
+    + getActiveProducts(): Set<Product>
+    + isActive(): boolean
+    + activate(): void
+    + deactivate(): void
+}
+
+' Clase para proveedores
+class Supplier extends BaseEntity implements IAuditable, IActivatable {
+    - supplierName: String
+    - contactPerson: String
+    - email: String
+    - phone: String
+    - address: String
+    - taxId: String {unique}
+    - isActive: boolean
+    - products: Set<Product>
+    --
+    + Supplier(supplierName, contactPerson, taxId)
+    + getSupplierName(): String
+    + getContactInfo(): ContactInfo
+    + getProducts(): Set<Product>
+    + getActiveProducts(): Set<Product>
+    + isActive(): boolean
+    + activate(): void
+    + deactivate(): void
+    + updateContactInfo(ContactInfo): void
+}
+
+' ============================================================================
+' CLASES DE DOMINIO - INVENTARIO CORE
+' ============================================================================
+
+' Clase principal para productos del inventario
+class Product extends BaseEntity implements IAuditable, IActivatable {
+    - productCode: String {unique}
+    - productName: String
+    - description: String
+    - category: Category
+    - supplier: Supplier
+    - unitPrice: BigDecimal
+    - costPrice: BigDecimal
+    - unitOfMeasure: String
+    - minStockLevel: Integer
+    - maxStockLevel: Integer
+    - isActive: boolean
+    - createdBy: User
+    - stock: InventoryStock
+    - movements: Set<InventoryMovement>
+    --
+    + Product(productCode, productName, Category, Supplier, User)
+    + getProductCode(): String
+    + getProductName(): String
+    + getCurrentStock(): Integer
+    + getAvailableStock(): Integer
+    + isLowStock(): boolean
+    + isOverStock(): boolean
+    + calculateStockValue(): BigDecimal
+    + updatePrices(BigDecimal, BigDecimal): void
+    + setStockLevels(Integer, Integer): void
+    + isActive(): boolean
+    + activate(): void
+    + deactivate(): void
+    + getCategory(): Category
+    + getSupplier(): Supplier
+}
+
+' Clase para stock actual de productos
+class InventoryStock extends BaseEntity {
+    - product: Product {unique}
+    - currentQuantity: Integer
+    - reservedQuantity: Integer
+    - availableQuantity: Integer
+    - lastUpdated: DateTime
+    - lastUpdatedBy: User
+    --
+    + InventoryStock(Product, Integer)
+    + getCurrentQuantity(): Integer
+    + getAvailableQuantity(): Integer
+    + getReservedQuantity(): Integer
+    + addStock(Integer, User): void
+    + removeStock(Integer, User): void
+    + reserveStock(Integer): boolean
+    + releaseReservedStock(Integer): void
+    + adjustStock(Integer, User): void
+    + updateQuantities(): void
+    + getProduct(): Product
+    + getLastUpdatedBy(): User
+}
+
+' Clase para tipos de movimientos
+class MovementTypeEntity extends BaseEntity {
+    - typeName: MovementType {unique}
+    - description: String
+    - affectsStock: boolean
+    - isInbound: boolean
+    - movements: Set<InventoryMovement>
+    --
+    + MovementTypeEntity(MovementType, description)
+    + getTypeName(): MovementType
+    + getDescription(): String
+    + affectsStock(): boolean
+    + isInbound(): boolean
+    + getMovements(): Set<InventoryMovement>
+}
+
+' Clase para movimientos de inventario
+class InventoryMovement extends BaseEntity {
+    - product: Product
+    - movementType: MovementTypeEntity
+    - quantity: Integer
+    - unitPrice: BigDecimal
+    - totalAmount: BigDecimal
+    - previousStock: Integer
+    - newStock: Integer
+    - referenceNumber: String
+    - notes: String
+    - movementDate: DateTime
+    - createdBy: User
+    --
+    + InventoryMovement(Product, MovementTypeEntity, Integer, User)
+    + getProduct(): Product
+    + getMovementType(): MovementTypeEntity
+    + getQuantity(): Integer
+    + getTotalAmount(): BigDecimal
+    + calculateTotalAmount(): BigDecimal
+    + setReferenceNumber(String): void
+    + addNotes(String): void
+    + getCreatedBy(): User
+    + getMovementDate(): DateTime
+    + getPreviousStock(): Integer
+    + getNewStock(): Integer
+}
+
+' ============================================================================
+' CLASES DE DOMINIO - REPORTES
+' ============================================================================
+
+' Clase para reportes generados
+class Report extends BaseEntity {
+    - reportName: String
+    - reportType: ReportType
+    - parameters: Map<String, Object>
+    - filePath: String
+    - fileFormat: ReportFormat
+    - generatedAt: DateTime
+    - generatedBy: User
+    - isDeleted: boolean
+    --
+    + Report(String, ReportType, Map, User)
+    + getReportName(): String
+    + getReportType(): ReportType
+    + getParameters(): Map<String, Object>
+    + getFilePath(): String
+    + getFileFormat(): ReportFormat
+    + getGeneratedBy(): User
+    + isDeleted(): boolean
+    + markAsDeleted(): void
+    + getFileSize(): Long
+    + isExpired(): boolean
+}
+
+' ============================================================================
+' CLASES DE DOMINIO - AUDITORÍA
+' ============================================================================
+
+' Clase para logs de auditoría
+class AuditLog extends BaseEntity {
+    - user: User
+    - action: String
+    - tableName: String
+    - recordId: Long
+    - oldValues: Map<String, Object>
+    - newValues: Map<String, Object>
+    - ipAddress: String
+    - userAgent: String
+    --
+    + AuditLog(User, String, String, Long)
+    + getUser(): User
+    + getAction(): String
+    + getTableName(): String
+    + getRecordId(): Long
+    + getOldValues(): Map<String, Object>
+    + getNewValues(): Map<String, Object>
+    + getIpAddress(): String
+    + getUserAgent(): String
+    + setChangeDetails(Map, Map): void
+    + setConnectionInfo(String, String): void
+}
+
+' ============================================================================
+' CLASES DE SERVICIO Y UTILIDADES
+' ============================================================================
+
+' Clase para información de contacto (Value Object)
+class ContactInfo {
+    - email: String
+    - phone: String
+    - address: String
+    --
+    + ContactInfo(String, String, String)
+    + getEmail(): String
+    + getPhone(): String
+    + getAddress(): String
+    + isValidEmail(): boolean
+    + isValidPhone(): boolean
+}
+
+' Clase para gestión de autenticación JWT
+class JWTManager {
+    - secretKey: String
+    - expirationTime: Long
+    --
+    + generateToken(User): String
+    + validateToken(String): boolean
+    + extractUsername(String): String
+    + extractExpiration(String): Date
+    + isTokenExpired(String): boolean
+    + refreshToken(String): String
+}
+
+' Clase para gestión de permisos
+class PermissionManager {
+    - rolePermissions: Map<RoleType, Set<String>>
+    --
+    + hasPermission(User, String): boolean
+    + getUserPermissions(User): Set<String>
+    + getRolePermissions(RoleType): Set<String>
+    + addPermissionToRole(RoleType, String): void
+}
+
+' ============================================================================
+' RELACIONES ENTRE CLASES
+' ============================================================================
+
+' Herencia
+BaseEntity <|-- User
+BaseEntity <|-- Role
+BaseEntity <|-- UserRole
+BaseEntity <|-- UserSession
+BaseEntity <|-- Category
+BaseEntity <|-- Supplier
+BaseEntity <|-- Product
+BaseEntity <|-- InventoryStock
+BaseEntity <|-- MovementTypeEntity
+BaseEntity <|-- InventoryMovement
+BaseEntity <|-- Report
+BaseEntity <|-- AuditLog
+
+' Implementaciones de interfaces
+IAuditable <|.. User
+IAuditable <|.. Category
+IAuditable <|.. Supplier
+IAuditable <|.. Product
+IActivatable <|.. User
+IActivatable <|.. Category
+IActivatable <|.. Supplier
+IActivatable <|.. Product
+
+' Relaciones de asociación
+User ||--o{ UserRole : "tiene roles"
+Role ||--o{ UserRole : "asignado a"
+User ||--o{ UserSession : "mantiene sesiones"
+User ||--o{ Product : "crea"
+User ||--o{ InventoryMovement : "registra"
+User ||--o{ Report : "genera"
+User ||--o{ AuditLog : "realiza acciones"
+User ||--o{ InventoryStock : "actualiza"
+
+Category ||--o{ Product : "clasifica"
+Supplier ||--o{ Product : "suministra"
+Product ||--|| InventoryStock : "tiene stock"
+Product ||--o{ InventoryMovement : "registra movimientos"
+MovementTypeEntity ||--o{ InventoryMovement : "categoriza"
+
+' Relaciones de composición
+User *-- ContactInfo : "contiene"
+Supplier *-- ContactInfo : "contiene"
+
+' Relaciones de dependencia
+User ..> JWTManager : "usa"
+User ..> PermissionManager : "usa"
+Role ..> PermissionManager : "configura"
+
+' ============================================================================
+' NOTAS EXPLICATIVAS DEL DIAGRAMA DE CLASES
+' ============================================================================
+
+note top of User : **CLASE PRINCIPAL DE USUARIOS**\nManeja autenticación JWT, roles y permisos\nImplementa patrón Active Record\nValidaciones de seguridad integradas
+note top of Product : **ENTIDAD CORE DEL INVENTARIO**\nProducto con código único (SKU)\nControl de stock mín/máx automático\nCálculos de valoración integrados
+note top of InventoryStock : **GESTIÓN DE STOCK EN TIEMPO REAL**\nActualización automática con movimientos\nControl de stock disponible vs reservado\nValidaciones de consistencia
+note top of InventoryMovement : **TRAZABILIDAD COMPLETA**\nHistorial inmutable de movimientos\nCálculos automáticos de totales\nReferencias a documentos externos
+note top of BaseEntity : **CLASE BASE COMÚN**\nID autoincremental\nTimestamps automáticos\nFuncionalidad común compartida
+
+note bottom : **STOCK FLOW - DIAGRAMA DE CLASES**\nDiseño orientado a objetos con principios SOLID\nPatrones: Active Record, Repository, Factory\nValidaciones de dominio en entidades\nSeparación clara de responsabilidades
+
+@enduml

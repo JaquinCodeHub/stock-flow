@@ -1,0 +1,110 @@
+@startuml Secuencia_Producto_StockFlow
+!theme plain
+
+title Stock Flow - Creación de Producto\nBase de datos: SQLite\nGenerado: 2025-08-23 01:10:31 UTC por ShivaAtom
+
+actor Empleado as emp
+participant "Frontend SPA" as frontend
+participant "API Gateway" as gateway
+participant "Auth Middleware" as auth
+participant "Product Service" as productservice
+participant "Audit Service" as audit
+database "SQLite DB" as sqlite
+database "Redis Cache" as redis
+
+== Crear Nuevo Producto ==
+
+emp -> frontend : 1. Accede a /products/new\nCompleta formulario
+activate frontend
+
+frontend -> frontend : 2. Validación cliente\n(campos requeridos, formato)
+
+frontend -> gateway : 3. POST /products\nAuthorization: Bearer {jwt}\n{productData}
+activate gateway
+
+gateway -> auth : 4. validateJWT(token)
+activate auth
+
+auth -> redis : 5. GET session:{userId}
+activate redis
+redis --> auth : 6. sessionData
+deactivate redis
+
+auth -> auth : 7. Verify token signature\nCheck expiration
+
+alt Token válido
+    auth --> gateway : 8. {userId, roles, permissions}
+    deactivate auth
+    
+    gateway -> gateway : 9. Check permission\n'CREATE_PRODUCT'
+    
+    alt Permisos suficientes
+        gateway -> productservice : 10. createProduct(productData, userId)
+        activate productservice
+        
+        productservice -> productservice : 11. Validar datos de negocio\n(código único, precios > 0)
+        
+        productservice -> sqlite : 12. BEGIN TRANSACTION
+        activate sqlite
+        
+        productservice -> sqlite : 13. SELECT COUNT(*) FROM products\nWHERE product_code = ?
+        sqlite --> productservice : 14. count (verificar unicidad)
+        
+        alt Código único
+            productservice -> sqlite : 15. INSERT INTO products\n(product_code, product_name, description,\ncategory_id, supplier_id, unit_price,\ncost_price, unit_of_measure,\nmin_stock_level, max_stock_level,\nis_active, created_by, created_at)
+            sqlite --> productservice : 16. product_id generado
+            
+            productservice -> sqlite : 17. INSERT INTO inventory_stock\n(product_id, current_quantity,\nreserved_quantity, available_quantity,\nlast_updated, last_updated_by)
+            sqlite --> productservice : 18. stock_id generado
+            
+            productservice -> sqlite : 19. COMMIT TRANSACTION
+            sqlite --> productservice : 20. Success
+            deactivate sqlite
+            
+            productservice -> audit : 21. logAction('CREATE_PRODUCT',\nproductId, newValues, userId)
+            activate audit
+            audit -> sqlite : 22. INSERT INTO audit_logs\n(user_id, action, table_name, record_id,\nnew_values, ip_address, created_at)
+            activate sqlite
+            sqlite --> audit : 23. Success
+            deactivate sqlite
+            deactivate audit
+            
+            productservice -> redis : 24. DEL cache:products:*\n(invalidar cache)
+            activate redis
+            redis --> productservice : 25. OK
+            deactivate redis
+            
+            productservice --> gateway : 26. {product, message: 'Producto creado'}
+            deactivate productservice
+            
+            gateway --> frontend : 27. 201 Created\n{success: true, product, message}
+            deactivate gateway
+            
+            frontend -> frontend : 28. Actualizar estado local\nMostrar notificación éxito
+            
+            frontend --> emp : 29. Redireccionar a /products/{id}\nMostrar producto creado
+            deactivate frontend
+            
+        else Código duplicado
+            productservice -> sqlite : 19. ROLLBACK TRANSACTION
+            productservice --> gateway : 26. Error: Código ya existe
+            gateway --> frontend : 27. 409 Conflict
+            frontend --> emp : 29. Mostrar error de duplicado
+        end
+        
+    else Sin permisos
+        gateway --> frontend : 27. 403 Forbidden
+        frontend --> emp : 29. Mostrar error de permisos
+    end
+    
+else Token inválido
+    auth --> gateway : 8. Error: Invalid token
+    gateway --> frontend : 27. 401 Unauthorized
+    frontend -> frontend : 28. Limpiar sesión local
+    frontend --> emp : 29. Redireccionar a /login
+end
+
+note over emp, redis : SQLite con WAL mode permite\nlecturas concurrentes durante escrituras
+note over sqlite : Transacciones ACID garantizan\nconsistencia de datos
+
+@enduml

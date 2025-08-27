@@ -1,0 +1,95 @@
+@startuml Secuencia_Movimiento_StockFlow
+!theme plain
+
+title Stock Flow - Registro de Movimiento de Inventario\nBase de datos: SQLite\nGenerado: 2025-08-23 01:10:31 UTC por ShivaAtom
+
+actor Empleado as emp
+participant "Frontend" as frontend
+participant "API Gateway" as gateway
+participant "Inventory Service" as inventory
+participant "Notification Service" as notify
+database "SQLite DB" as sqlite
+database "Redis Cache" as redis
+
+== Registrar Salida de Stock ==
+
+emp -> frontend : 1. Selecciona producto\nIngresa cantidad salida
+activate frontend
+
+frontend -> frontend : 2. Validación cliente\n(cantidad > 0, producto válido)
+
+frontend -> gateway : 3. POST /inventory/movements\n{productId, type: 'SALIDA', quantity, notes}
+activate gateway
+
+gateway -> inventory : 4. createMovement(movementData, userId)
+activate inventory
+
+inventory -> sqlite : 5. BEGIN TRANSACTION
+activate sqlite
+
+inventory -> sqlite : 6. SELECT current_quantity, available_quantity\nFROM inventory_stock\nWHERE product_id = ? FOR UPDATE
+sqlite --> inventory : 7. currentStock data
+
+alt Stock suficiente disponible
+    inventory -> inventory : 8. Calcular nuevo stock\nnewQuantity = current - quantity
+    
+    inventory -> sqlite : 9. INSERT INTO inventory_movements\n(product_id, movement_type_id, quantity,\nunit_price, total_amount, previous_stock,\nnew_stock, notes, movement_date,\ncreated_by, created_at)
+    sqlite --> inventory : 10. movement_id generado
+    
+    inventory -> sqlite : 11. UPDATE inventory_stock\nSET current_quantity = ?,\navailable_quantity = ?,\nlast_updated = datetime('now'),\nlast_updated_by = ?\nWHERE product_id = ?
+    sqlite --> inventory : 12. Stock actualizado
+    
+    inventory -> sqlite : 13. SELECT p.product_name, p.min_stock_level,\ns.current_quantity\nFROM products p\nJOIN inventory_stock s ON p.product_id = s.product_id\nWHERE p.product_id = ?
+    sqlite --> inventory : 14. productInfo
+    
+    inventory -> sqlite : 15. COMMIT TRANSACTION
+    sqlite --> inventory : 16. Success
+    deactivate sqlite
+    
+    alt Stock bajo mínimo después del movimiento
+        inventory -> notify : 17. sendStockAlert(productId, currentStock, minLevel)
+        activate notify
+        
+        notify -> redis : 18. PUBLISH stock_alerts\n{productId, level: 'LOW', quantity}
+        activate redis
+        redis --> notify : 19. Alert published
+        deactivate redis
+        
+        notify -> sqlite : 20. INSERT INTO notifications\n(user_id, type, message, is_read, created_at)
+        activate sqlite
+        sqlite --> notify : 21. Notification saved
+        deactivate sqlite
+        deactivate notify
+    end
+    
+    inventory -> redis : 22. DEL cache:stock:{productId}\n(invalidar cache de stock)
+    activate redis
+    redis --> inventory : 23. Cache invalidated
+    deactivate redis
+    
+    inventory --> gateway : 24. {movement, newStock, alerts[]}
+    deactivate inventory
+    
+    gateway --> frontend : 25. 200 OK\n{success: true, movement, stock}
+    deactivate gateway
+    
+    frontend -> frontend : 26. Actualizar estado local\nMostrar confirmación
+    
+    alt Alerta de stock bajo
+        frontend -> frontend : 27. Mostrar alerta\n"Stock bajo en {producto}"
+    end
+    
+    frontend --> emp : 28. Confirmar movimiento\nActualizar vista de stock
+    deactivate frontend
+    
+else Stock insuficiente
+    inventory -> sqlite : 15. ROLLBACK TRANSACTION
+    inventory --> gateway : 24. Error: Stock insuficiente
+    gateway --> frontend : 25. 400 Bad Request
+    frontend --> emp : 28. Mostrar error de stock
+end
+
+note over sqlite : SQLite con IMMEDIATE transactions\npreviene problemas de concurrencia
+note over notify : Sistema de alertas en tiempo real\npara gestión proactiva de inventario
+
+@enduml

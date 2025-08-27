@@ -1,0 +1,130 @@
+@startuml Secuencia_Movil_StockFlow
+!theme plain
+
+title Stock Flow - Operación Móvil con Scanner\nBase de datos: SQLite\nGenerado: 2025-08-23 01:10:31 UTC por ShivaAtom
+
+actor Empleado as emp
+participant "PWA Mobile" as mobile
+participant "Camera API" as camera
+participant "API Gateway" as gateway
+participant "Product Service" as product
+participant "Inventory Service" as inventory
+database "SQLite DB" as sqlite
+database "Redis Cache" as redis
+
+== Escanear y Movimiento Rápido ==
+
+emp -> mobile : 1. Abre PWA móvil\nAccede a /mobile/scan
+activate mobile
+
+mobile -> mobile : 2. Verificar permisos\ncámara y almacenamiento
+
+mobile -> camera : 3. navigator.mediaDevices\n.getUserMedia({video: true})
+activate camera
+camera --> mobile : 4. videoStream
+deactivate camera
+
+mobile -> mobile : 5. Inicializar scanner\n(QuaggaJS/ZXing)
+
+emp -> mobile : 6. Apunta cámara\na código de barras
+mobile -> mobile : 7. Detectar código\nvalidar formato
+
+mobile -> mobile : 8. Código detectado\n{barcode: "123456789"}
+
+mobile -> gateway : 9. GET /products/code/{barcode}\nOffline-first con cache
+activate gateway
+
+gateway -> product : 10. getProductByCode(barcode)
+activate product
+
+product -> redis : 11. GET cache:product:code:{barcode}
+activate redis
+
+alt Cache hit
+    redis --> product : 12. cachedProduct
+    deactivate redis
+    product --> gateway : 13. productData
+    
+else Cache miss
+    redis --> product : 12. null
+    deactivate redis
+    
+    product -> sqlite : 13. SELECT p.*, c.category_name, s.supplier_name,\nst.current_quantity, st.available_quantity\nFROM products p\nJOIN categories c ON p.category_id = c.category_id\nJOIN suppliers s ON p.supplier_id = s.supplier_id\nJOIN inventory_stock st ON p.product_id = st.product_id\nWHERE p.product_code = ? AND p.is_active = 1
+    activate sqlite
+    sqlite --> product : 14. productData
+    deactivate sqlite
+    
+    product -> redis : 15. SETEX cache:product:code:{barcode}\n3600 {productData}
+    activate redis
+    redis --> product : 16. Cached
+    deactivate redis
+    
+    product --> gateway : 17. productData
+end
+
+deactivate product
+
+gateway --> mobile : 18. 200 OK\n{product, stock}
+deactivate gateway
+
+mobile -> mobile : 19. Mostrar información\nproducto + stock actual
+
+mobile -> mobile : 20. Formulario rápido\n[Entrada/Salida] [Cantidad]
+
+emp -> mobile : 21. Selecciona "Salida"\nIngresa cantidad: 5
+
+mobile -> mobile : 22. Validación offline\n(cantidad > 0, stock disponible)
+
+mobile -> gateway : 23. POST /inventory/movements\n{productId, type: 'SALIDA', quantity: 5,\nnotes: 'Movimiento móvil'}
+activate gateway
+
+gateway -> inventory : 24. createMovement(data, userId)
+activate inventory
+
+inventory -> sqlite : 25. Ejecutar transacción\nmovimiento + actualizar stock
+activate sqlite
+sqlite --> inventory : 26. {movement, newStock}
+deactivate sqlite
+
+inventory -> redis : 27. Invalidar cache stock
+activate redis
+redis --> inventory : 28. Cache cleared
+deactivate redis
+
+inventory --> gateway : 29. {success, movement, stock}
+deactivate inventory
+
+gateway --> mobile : 30. 200 OK\n{movement, newStock}
+deactivate gateway
+
+mobile -> mobile : 31. Actualizar estado local\nGuardar en localStorage
+
+mobile -> mobile : 32. Mostrar confirmación\n"✓ Salida registrada\nNuevo stock: {quantity}"
+
+mobile -> mobile : 33. Vibrar dispositivo\n(feedback háptico)
+
+mobile --> emp : 34. Listo para siguiente\nescaneo/operación
+deactivate mobile
+
+== Sincronización Offline ==
+
+alt Conexión perdida
+    mobile -> mobile : 35. Detectar offline\nService Worker activo
+    
+    emp -> mobile : 36. Continúa operaciones
+    mobile -> mobile : 37. Guardar en IndexedDB\nqueue para sincronizar
+    
+    mobile -> mobile : 38. Mostrar indicador\n"Modo offline - Se sincronizará"
+    
+    alt Conexión restaurada
+        mobile -> mobile : 39. Detectar online
+        mobile -> mobile : 40. Procesar queue\nIndexedDB → API
+        mobile -> mobile : 41. Sincronización completa\nLimpiar queue local
+    end
+end
+
+note over mobile : PWA con Service Workers\npermite operación offline completa
+note over redis : Cache inteligente reduce\nlatencia en operaciones móviles
+note over sqlite : SQLite ideal para aplicaciones\nmóviles por su ligereza
+
+@enduml

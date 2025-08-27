@@ -1,0 +1,311 @@
+@startuml ERD_StockFlow_Sistema
+!define ENTITY class
+!define PK <b><color:red>
+!define FK <color:blue>
+!define UK <color:orange>
+
+' Configuración del diagrama
+skinparam class {
+    BackgroundColor White
+    BorderColor Black
+    ArrowColor Black
+}
+
+title Stock Flow - Diagrama Entidad-Relación (ERD)\nSistema de Gestión de Inventarios
+
+' ============================================================================
+' ENTIDADES PRINCIPALES DEL SISTEMA STOCK FLOW
+' ============================================================================
+
+' Entidad: Usuarios del sistema (empleados y administradores)
+' Maneja autenticación JWT y datos personales de usuarios
+ENTITY users {
+    PK user_id : BIGINT <<PK>>
+    --
+    ' Campos únicos para autenticación
+    username : VARCHAR(50) <<UK>>
+    email : VARCHAR(100) <<UK>>
+    ' Hash seguro de contraseña (bcrypt recomendado)
+    password_hash : VARCHAR(255)
+    ' Información personal del empleado
+    first_name : VARCHAR(50)
+    last_name : VARCHAR(50)
+    phone : VARCHAR(15)
+    ' Control de estado del usuario
+    is_active : BOOLEAN
+    ' Timestamps para auditoría
+    created_at : TIMESTAMP
+    updated_at : TIMESTAMP
+    last_login : TIMESTAMP
+}
+
+' Entidad: Roles del sistema para control de acceso
+' Define los niveles de permisos (ADMIN, EMPLOYEE)
+ENTITY roles {
+    PK role_id : BIGINT <<PK>>
+    --
+    ' Nombre único del rol (ADMIN, EMPLOYEE)
+    role_name : VARCHAR(30) <<UK>>
+    ' Descripción detallada del rol y permisos
+    description : TEXT
+    created_at : TIMESTAMP
+}
+
+' Entidad: Relación muchos a muchos entre usuarios y roles
+' Permite que un usuario tenga múltiples roles
+ENTITY user_roles {
+    PK user_role_id : BIGINT <<PK>>
+    --
+    ' Referencias a usuario y rol
+    FK user_id : BIGINT <<FK>>
+    FK role_id : BIGINT <<FK>>
+    ' Metadatos de asignación
+    assigned_at : TIMESTAMP
+    ' Usuario que asignó el rol (para auditoría)
+    assigned_by : BIGINT <<FK>>
+}
+
+' ============================================================================
+' ENTIDADES DE CATÁLOGO Y CONFIGURACIÓN
+' ============================================================================
+
+' Entidad: Categorías para clasificar productos
+' Permite organizar el inventario por tipos de productos
+ENTITY categories {
+    PK category_id : BIGINT <<PK>>
+    --
+    ' Nombre único de la categoría
+    category_name : VARCHAR(50) <<UK>>
+    ' Descripción detallada de la categoría
+    description : TEXT
+    ' Control de estado (activa/inactiva)
+    is_active : BOOLEAN
+    created_at : TIMESTAMP
+    updated_at : TIMESTAMP
+}
+
+' Entidad: Proveedores de productos
+' Almacena información de contacto y datos fiscales
+ENTITY suppliers {
+    PK supplier_id : BIGINT <<PK>>
+    --
+    ' Información básica del proveedor
+    supplier_name : VARCHAR(100)
+    contact_person : VARCHAR(100)
+    email : VARCHAR(100)
+    phone : VARCHAR(15)
+    address : TEXT
+    ' Identificación fiscal única
+    tax_id : VARCHAR(20) <<UK>>
+    ' Control de estado del proveedor
+    is_active : BOOLEAN
+    created_at : TIMESTAMP
+    updated_at : TIMESTAMP
+}
+
+' ============================================================================
+' ENTIDADES CORE DEL INVENTARIO
+' ============================================================================
+
+' Entidad: Productos del inventario
+' Catálogo principal con información completa de cada producto
+ENTITY products {
+    PK product_id : BIGINT <<PK>>
+    --
+    ' Código único del producto (SKU)
+    product_code : VARCHAR(50) <<UK>>
+    ' Información básica del producto
+    product_name : VARCHAR(100)
+    description : TEXT
+    ' Referencias a categoría y proveedor
+    FK category_id : BIGINT <<FK>>
+    FK supplier_id : BIGINT <<FK>>
+    ' Precios y costos
+    unit_price : DECIMAL(10,2)
+    cost_price : DECIMAL(10,2)
+    ' Unidad de medida (kg, pza, litros, etc.)
+    unit_of_measure : VARCHAR(20)
+    ' Niveles de stock mínimo y máximo para alertas
+    min_stock_level : INTEGER
+    max_stock_level : INTEGER
+    ' Control de estado del producto
+    is_active : BOOLEAN
+    created_at : TIMESTAMP
+    updated_at : TIMESTAMP
+    ' Usuario que creó el producto
+    FK created_by : BIGINT <<FK>>
+}
+
+' Entidad: Stock actual de productos en tiempo real
+' Mantiene las cantidades actuales de cada producto
+ENTITY inventory_stock {
+    PK stock_id : BIGINT <<PK>>
+    --
+    ' Referencia al producto
+    FK product_id : BIGINT <<FK>>
+    ' Cantidad total disponible
+    current_quantity : INTEGER
+    ' Cantidad reservada (pedidos pendientes)
+    reserved_quantity : INTEGER
+    ' Cantidad disponible para venta (current - reserved)
+    available_quantity : INTEGER
+    ' Control de última actualización
+    last_updated : TIMESTAMP
+    ' Usuario que realizó la última actualización
+    FK last_updated_by : BIGINT <<FK>>
+}
+
+' Entidad: Tipos de movimientos de inventario
+' Cataloga los diferentes tipos de transacciones
+ENTITY movement_types {
+    PK movement_type_id : BIGINT <<PK>>
+    --
+    ' Nombre del tipo (ENTRADA, SALIDA, AJUSTE, etc.)
+    type_name : VARCHAR(30) <<UK>>
+    ' Descripción del tipo de movimiento
+    description : TEXT
+    ' Indica si afecta el stock físico
+    affects_stock : BOOLEAN
+    ' Indica si es movimiento de entrada (true) o salida (false)
+    is_inbound : BOOLEAN
+}
+
+' Entidad: Historial de movimientos de inventario
+' Registra todos los movimientos para trazabilidad completa
+ENTITY inventory_movements {
+    PK movement_id : BIGINT <<PK>>
+    --
+    ' Referencias principales
+    FK product_id : BIGINT <<FK>>
+    FK movement_type_id : BIGINT <<FK>>
+    ' Detalles del movimiento
+    quantity : INTEGER
+    unit_price : DECIMAL(10,2)
+    total_amount : DECIMAL(10,2)
+    ' Stock antes y después del movimiento
+    previous_stock : INTEGER
+    new_stock : INTEGER
+    ' Número de referencia para documentos externos
+    reference_number : VARCHAR(50)
+    ' Notas adicionales del movimiento
+    notes : TEXT
+    ' Fecha del movimiento (puede ser diferente a created_at)
+    movement_date : TIMESTAMP
+    ' Usuario que registró el movimiento
+    FK created_by : BIGINT <<FK>>
+    created_at : TIMESTAMP
+}
+
+' ============================================================================
+' ENTIDADES DE REPORTES Y GESTIÓN
+' ============================================================================
+
+' Entidad: Reportes generados por el sistema
+' Almacena metadatos de reportes creados por usuarios
+ENTITY reports {
+    PK report_id : BIGINT <<PK>>
+    --
+    ' Información del reporte
+    report_name : VARCHAR(100)
+    ' Tipo de reporte (STOCK, MOVEMENTS, PRODUCTS, etc.)
+    report_type : VARCHAR(50)
+    ' Parámetros utilizados para generar el reporte (JSON)
+    parameters : JSON
+    ' Ruta del archivo generado
+    file_path : VARCHAR(255)
+    ' Formato del archivo (PDF, XLSX, CSV)
+    file_format : VARCHAR(10)
+    ' Metadatos de generación
+    generated_at : TIMESTAMP
+    ' Usuario que generó el reporte
+    FK generated_by : BIGINT <<FK>>
+    ' Soft delete para reportes
+    is_deleted : BOOLEAN
+}
+
+' ============================================================================
+' ENTIDADES DE SEGURIDAD Y AUDITORÍA
+' ============================================================================
+
+' Entidad: Sesiones de usuario para tracking de JWT
+' Mantiene control de sesiones activas para seguridad
+ENTITY user_sessions {
+    PK session_id : BIGINT <<PK>>
+    --
+    ' Usuario de la sesión
+    FK user_id : BIGINT <<FK>>
+    ' Hash del token JWT para invalidación
+    jwt_token_hash : VARCHAR(255)
+    ' Información de la conexión
+    ip_address : VARCHAR(45)
+    user_agent : TEXT
+    ' Control de expiración
+    expires_at : TIMESTAMP
+    created_at : TIMESTAMP
+    ' Estado de la sesión
+    is_active : BOOLEAN
+}
+
+' Entidad: Logs de auditoría para trazabilidad completa
+' Registra todas las acciones importantes del sistema
+ENTITY audit_logs {
+    PK log_id : BIGINT <<PK>>
+    --
+    ' Usuario que realizó la acción
+    FK user_id : BIGINT <<FK>>
+    ' Tipo de acción (CREATE, UPDATE, DELETE, LOGIN, etc.)
+    action : VARCHAR(50)
+    ' Tabla afectada
+    table_name : VARCHAR(50)
+    ' ID del registro afectado
+    record_id : BIGINT
+    ' Valores anteriores (JSON para flexibilidad)
+    old_values : JSON
+    ' Valores nuevos (JSON para flexibilidad)
+    new_values : JSON
+    ' Información de la conexión
+    ip_address : VARCHAR(45)
+    user_agent : TEXT
+    created_at : TIMESTAMP
+}
+
+' ============================================================================
+' RELACIONES ENTRE ENTIDADES
+' ============================================================================
+
+' Relaciones de usuarios y roles
+users ||--o{ user_roles : "tiene roles"
+roles ||--o{ user_roles : "asignado a usuarios"
+users ||--o{ user_sessions : "inicia sesiones"
+
+' Relaciones de creación y auditoría
+users ||--o{ products : "crea productos"
+users ||--o{ inventory_movements : "registra movimientos"
+users ||--o{ reports : "genera reportes"
+users ||--o{ audit_logs : "realiza acciones"
+users ||--o{ user_roles : "asigna roles"
+users ||--o{ inventory_stock : "actualiza stock"
+
+' Relaciones del catálogo de productos
+categories ||--o{ products : "clasifica productos"
+suppliers ||--o{ products : "suministra productos"
+
+' Relaciones del inventario
+products ||--|| inventory_stock : "mantiene stock"
+products ||--o{ inventory_movements : "registra movimientos"
+movement_types ||--o{ inventory_movements : "categoriza movimientos"
+
+' ============================================================================
+' NOTAS EXPLICATIVAS DEL SISTEMA
+' ============================================================================
+
+note top of users : **USUARIOS DEL SISTEMA**\nEmpleados y administradores con autenticación JWT segura\nControl de estado activo/inactivo\nTracking de último login
+note top of roles : **SISTEMA DE ROLES**\nRoles: ADMIN (gestión completa), EMPLOYEE (operaciones)\nPermisos granulares por funcionalidad\nAsignación múltiple de roles por usuario
+note top of products : **CATÁLOGO DE PRODUCTOS**\nProductos con códigos únicos (SKU)\nPrecios de venta y costo\nNiveles de stock mín/máx para alertas
+note top of inventory_stock : **STOCK EN TIEMPO REAL**\nInventario actual con cantidades exactas\nStock disponible vs reservado\nActualización automática con movimientos
+note top of inventory_movements : **HISTORIAL COMPLETO**\nTrazabilidad total de movimientos\nTipos: ENTRADA, SALIDA, AJUSTE, TRANSFERENCIA\nReferencias a documentos externos
+note top of audit_logs : **AUDITORÍA Y SEGURIDAD**\nLog completo de todas las acciones\nTrazabilidad para compliance\nSeguridad y detección de anomalías
+
+note bottom : **STOCK FLOW - SISTEMA DE INVENTARIOS**\nBase de datos normalizada en 3NF\nDiseño escalable para PyMEs\nSeguridad JWT + auditoría completa
+
+@enduml

@@ -1,0 +1,55 @@
+@startuml Arquitectura_StockFlow_General
+!theme plain
+
+title Stock Flow - Vista General de Arquitectura\nSistema de Gestión de Inventarios
+
+' Definición de capas principales
+package "FRONTEND" {
+    [Web App SPA] as webapp
+    [Mobile PWA] as mobile
+    [Admin Dashboard] as admin
+}
+
+package "API LAYER" {
+    [API Gateway] as gateway
+    [Auth Service] as auth
+}
+
+package "BACKEND SERVICES" {
+    [User API] as userapi
+    [Product API] as productapi
+    [Inventory API] as inventoryapi
+    [Reports API] as reportsapi
+}
+
+package "DATA LAYER" {
+    database "PostgreSQL" as db
+    database "Redis Cache" as cache
+    database "File Storage" as files
+}
+
+' Conexiones principales
+webapp --> gateway
+mobile --> gateway
+admin --> gateway
+
+gateway --> auth
+gateway --> userapi
+gateway --> productapi
+gateway --> inventoryapi
+gateway --> reportsapi
+
+userapi --> db
+productapi --> db
+inventoryapi --> db
+reportsapi --> db
+
+auth --> cache
+gateway --> cache
+
+reportsapi --> files
+
+note right of gateway : Punto único de entrada\nAutenticación JWT\nRate limiting
+note bottom of db : Base de datos principal\nPostgreSQL normalizada\nBackups automáticos
+
+@enduml

@@ -1,0 +1,71 @@
+@startuml CasosDeUso_StockFlow_Principal
+skinparam usecase {
+    BackgroundColor White
+    BorderColor Black
+}
+
+skinparam actor {
+    BackgroundColor LightBlue
+    BorderColor Black
+}
+
+title Stock Flow - Casos de Uso Principales\nSistema de Gestión de Inventarios
+
+' Actores
+actor Empleado as emp
+actor Administrador as admin
+actor "Sistema Auditoría" as audit
+
+' Paquetes principales
+package "Autenticación" {
+    usecase "Iniciar Sesión" as login
+    usecase "Gestionar Sesiones" as sessions
+    usecase "Cambiar Contraseña" as password
+}
+
+package "Productos" {
+    usecase "CRUD Productos" as crud_products
+    usecase "Buscar Productos" as search_products
+    usecase "Gestionar Categorías" as categories
+}
+
+package "Inventario" {
+    usecase "Registrar Movimientos" as movements
+    usecase "Consultar Stock" as view_stock
+    usecase "Ajustar Inventario" as adjust_stock
+    usecase "Alertas de Stock" as alerts
+}
+
+package "Reportes" {
+    usecase "Generar Reportes" as reports
+    usecase "Dashboard Métricas" as dashboard
+    usecase "Programar Reportes" as schedule
+}
+
+package "Administración" {
+    usecase "Gestionar Usuarios" as users
+    usecase "Configurar Sistema" as config
+    usecase "Auditoría" as audit_logs
+}
+
+' Relaciones principales
+emp --> login
+emp --> crud_products
+emp --> movements
+emp --> view_stock
+emp --> reports
+emp --> dashboard
+
+admin --> users
+admin --> config
+admin --> audit_logs
+admin --> schedule
+admin --|> emp : hereda
+
+audit --> audit_logs
+audit --> movements
+
+note right of admin : Administrador hereda\ntodos los permisos\nde Empleado
+note bottom : Casos de uso principales del sistema Stock Flow
+
+@enduml

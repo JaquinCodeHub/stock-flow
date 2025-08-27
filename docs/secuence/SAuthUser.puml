@@ -1,0 +1,84 @@
+@startuml Secuencia_Login_StockFlow
+!theme plain
+
+title Stock Flow - Proceso de Autenticación\nBase de datos: SQLite\nGenerado: 2025-08-23 01:10:31 UTC por ShivaAtom
+
+actor Usuario as user
+participant "Frontend\n(React/Vue)" as frontend
+participant "API Gateway\n(Express)" as gateway
+participant "Auth Service" as auth
+participant "User Service" as userservice
+database "SQLite DB" as sqlite
+database "Redis Cache" as redis
+
+== Proceso de Login ==
+
+user -> frontend : 1. Ingresa credenciales\n(username, password)
+activate frontend
+
+frontend -> frontend : 2. Valida formato\n(cliente-side)
+
+frontend -> gateway : 3. POST /auth/login\n{username, password}
+activate gateway
+
+gateway -> auth : 4. validateCredentials()
+activate auth
+
+auth -> userservice : 5. getUserByUsername(username)
+activate userservice
+
+userservice -> sqlite : 6. SELECT * FROM users\nWHERE username = ? AND is_active = 1
+activate sqlite
+sqlite --> userservice : 7. userData o null
+deactivate sqlite
+
+alt Usuario encontrado y activo
+    userservice --> auth : 8. userData
+    deactivate userservice
+    
+    auth -> auth : 9. bcrypt.compare(password, hash)
+    
+    alt Contraseña válida
+        auth -> auth : 10. Generar JWT token\njwt.sign(payload, secret)
+        
+        auth -> redis : 11. Almacenar sesión\nSET session:${userId} token
+        activate redis
+        redis --> auth : 12. OK
+        deactivate redis
+        
+        auth -> userservice : 13. updateLastLogin(userId)
+        activate userservice
+        userservice -> sqlite : 14. UPDATE users SET last_login = datetime('now')\nWHERE user_id = ?
+        activate sqlite
+        sqlite --> userservice : 15. Success
+        deactivate sqlite
+        deactivate userservice
+        
+        auth --> gateway : 16. {token, user, expiresIn}
+        deactivate auth
+        
+        gateway --> frontend : 17. 200 OK\n{success: true, token, user}
+        deactivate gateway
+        
+        frontend -> frontend : 18. Guardar token en localStorage\nActualizar estado global
+        
+        frontend --> user : 19. Redireccionar a /dashboard
+        deactivate frontend
+        
+    else Contraseña inválida
+        auth --> gateway : 20. Error: Invalid credentials
+        gateway --> frontend : 21. 401 Unauthorized
+        frontend --> user : 22. Mostrar error de credenciales
+    end
+    
+else Usuario no encontrado o inactivo
+    userservice --> auth : 8. null
+    auth --> gateway : 20. Error: User not found
+    gateway --> frontend : 21. 401 Unauthorized  
+    frontend --> user : 22. Mostrar error de credenciales
+end
+
+note over user, redis : Todas las operaciones de autenticación\nse registran en audit_logs para trazabilidad
+note over sqlite : SQLite maneja concurrencia con WAL mode\npara operaciones simultáneas de login
+
+@enduml
